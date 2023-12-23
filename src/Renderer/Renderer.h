@@ -21,7 +21,8 @@ struct RenderResult {
   Tensor first_oct_dis;
   Tensor disparity;
   Tensor edge_feats;
-  Tensor depth;
+  Tensor depth_means;
+  Tensor depth_vars;
   Tensor weights;
   Tensor idx_start_end;
 };

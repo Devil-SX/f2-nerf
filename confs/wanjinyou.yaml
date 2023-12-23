@@ -24,6 +24,7 @@ pts_sampler:
   scale_by_dis: true
 
 dataset:
+  with_depth: true
   factor: 2
   bounds_factor: [ 0.5, 4.0 ]
 

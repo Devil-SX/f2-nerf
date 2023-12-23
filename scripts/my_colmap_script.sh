@@ -13,15 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # Path to a directory `base/` with images in `base/images/`.
+set -e
+
 DATASET_PATH=$1
 
 # Recommended CAMERA values: OPENCV for perspective, OPENCV_FISHEYE for fisheye.
 CAMERA=OPENCV
 
-USE_GPU=1
+USE_GPU=0
 # Replace this with your own local copy of the file.
 # Download from: https://demuc.de/colmap/#download
-VOCABTREE_PATH=/home/ppwang/Projects/f2-nerf/data_local/vocab_tree_flickr100K_words32K.bin
+# VOCABTREE_PATH=/home/ppwang/Projects/f2-nerf/data_local/vocab_tree_flickr100K_words32K.bin
 
 # Run COLMAP.
 
@@ -30,6 +32,7 @@ colmap feature_extractor \
     --image_path "$DATASET_PATH"/images \
     --ImageReader.single_camera 1 \
     --ImageReader.camera_model "$CAMERA" \
+    --ImageReader.camera_mask_path "$DATASET_PATH"/camera_mask.png \
     --SiftExtraction.use_gpu "$USE_GPU"
 
 

@@ -22,10 +22,13 @@ class NeRFSceneManager(SceneManager):
         # COLMAP
         if os.path.exists(pjoin(data_dir, 'sparse', '0')):
             sfm_dir = pjoin(data_dir, 'sparse', '0')
+        # if os.path.exists(pjoin(data_dir, 'sparse', '1')):
+            # sfm_dir = pjoin(data_dir, 'sparse', '1')
+
         # hloc
         else:
             sfm_dir = pjoin(data_dir, 'hloc_sfm')
-
+    
         assert os.path.exists(sfm_dir)
         super(NeRFSceneManager, self).__init__(sfm_dir)
 
@@ -49,6 +52,7 @@ class NeRFSceneManager(SceneManager):
         self.load_points3D()
 
         # Assume shared intrinsics between all cameras.
+        # print(self.cameras)
         cam = self.cameras[1]
 
         # Extract focal lengths and principal point parameters.
@@ -141,10 +145,10 @@ class Dataset:
         points3D = scene_manager.points3D
         points3D_ids = scene_manager.point3D_ids
         point3D_id_to_images = scene_manager.point3D_id_to_images
-        image_id_to_image_idx = np.zeros(self.n_images + 10, dtype=np.int32)
+        # image_id_to_image_idx = np.zeros(self.n_images + 10, dtype=np.int32)
+        image_id_to_image_idx = np.zeros(len(os.listdir(pjoin(data_dir, "images"))) + 10, dtype=np.int32)
         for image_name in self.names:
             image_id_to_image_idx[name_to_ids[image_name]] = sorted_image_names.index(image_name)
-
         vis_arr = []
         for pts_i in range(len(points3D)):
             cams = np.zeros([self.n_images], dtype=np.uint8)
@@ -167,7 +171,7 @@ class Dataset:
             depth = -z_vals
             near_depth, far_depth = np.percentile(depth, 1.), np.percentile(depth, 99.)
             near_depth = near_depth * .5
-            far_depth = far_depth * 5.
+            far_depth = far_depth * 5.  
             self.bounds[img_i, 0], self.bounds[img_i, 1] = near_depth, far_depth
 
         # Move all to numpy

@@ -91,6 +91,7 @@ RenderResult Renderer::Render(const Tensor& rays_o, const Tensor& rays_d, const 
         torch::zeros({ n_rays }, CUDAFloat),
         Tensor(),
         torch::full({ n_rays }, 512.f, CUDAFloat),
+        torch::zeros({ n_rays }, CUDAFloat),
         Tensor(),
         Tensor()
     };
@@ -201,15 +202,18 @@ RenderResult Renderer::Render(const Tensor& rays_o, const Tensor& rays_d, const 
   Tensor trans = torch::exp(-acc_density);
   Tensor weights = trans * alphas;
 
-  Tensor last_trans = torch::exp(-FlexOps::Sum(sec_density, idx_start_end));
+  Tensor last_trans = torch::exp(-FlexOps::Sum(sec_density, idx_start_end)); // transparent probability
   Tensor colors = FlexOps::Sum(weights.unsqueeze(-1) * sampled_colors, idx_start_end);
   colors = colors + last_trans.unsqueeze(-1) * bg_color;
   Tensor disparity = FlexOps::Sum(weights / sampled_t, idx_start_end);
-  Tensor depth = FlexOps::Sum(weights * sampled_t, idx_start_end) / (1.f - last_trans + 1e-4f);
+  // Tensor depth = FlexOps::Sum(weights * sampled_t, idx_start_end) / (1.f - last_trans + 1e-4f); // TODO: Check why depth is divided by (1 - last_trans) for numerical stability?
+  // Tensor depth_means = FlexOps::Sum(weights * sampled_t, idx_start_end);
+  Tensor depth_means = torch::sum(weights * sampled_t,  -1,true);
+  Tensor depth_vars = FlexOps::Sum(weights * (sampled_t - depth_means).square(), idx_start_end);
 
   CHECK_NOT_NAN(colors);
 
-  return { colors, sample_result_early_stop.first_oct_dis, disparity, edge_feat, depth, weights, idx_start_end };
+  return { colors, sample_result_early_stop.first_oct_dis, disparity, edge_feat, depth_means, depth_vars, weights, idx_start_end };
 }
 
 

@@ -5,6 +5,7 @@
 #include <iostream>
 #include <fmt/core.h>
 #include <experimental/filesystem>
+#include <torch/types.h>
 #include "../Utils/cnpy.h"
 #include "../Utils/Utils.h"
 #include "../Utils/StopWatch.h"
@@ -64,7 +65,7 @@ Dataset::Dataset(GlobalDataPool* global_data_pool) {
     cam_data = cam_data.reshape({-1, 3, 4});
     cam_data = cam_data.index({Slc(0, n_render_poses)});
     Tensor poses = cam_data;
-    render_poses_ = poses;   // [n, 3, 4]
+    render_poses_ = poses;   // [n, 3, 4] 
     render_poses_.index_put_({Slc(), Slc(0, 3), 3}, (render_poses_.index({Slc(), Slc(0, 3), 3}) - center_.unsqueeze(0)) / radius_);
     std::cout << "Load render poses" << std::endl;
   }
@@ -84,9 +85,27 @@ Dataset::Dataset(GlobalDataPool* global_data_pool) {
     for (int i = 0; i < n_images_; i++) {
       std::string image_path;
       std::getline(image_list, image_path);
-      images.push_back(Utils::ReadImageTensor(image_path).to(torch::kCPU));
+      images.push_back(Utils::ReadImageTensor(image_path));
     }
   }
+
+  with_depth_ = config["with_depth"].as<bool>();
+  std::vector<Tensor> depths;
+  if (with_depth_) {
+    // Load depths
+    {
+      ScopeWatch watch("LoadDepths");
+      // TODO: Write a script to generate depth_list.txt and resize depth images (float32 npy type) by bilinear interpolation
+      std::ifstream depth_list(data_path + "/depth_list.txt");
+      for (int i = 0; i < n_images_; i++) {
+        std::string depth_path;
+        std::getline(depth_list, depth_path);
+        Tensor depth = Utils::ReadDepthTensor(depth_path);
+        depths.push_back(depth);
+      }
+    }
+  }
+
 
   // Load train/test/val split info
   try {
@@ -122,6 +141,12 @@ Dataset::Dataset(GlobalDataPool* global_data_pool) {
   height_ = images[0].size(0);
   width_  = images[0].size(1);
   image_tensors_ = torch::stack(images, 0).contiguous();
+
+  if (with_depth_) {
+    depth_tensors_ = torch::stack(depths, 0).contiguous();
+  } else {
+    depth_tensors_ = torch::zeros({n_images_, height_, width_}, CUDAFloat);
+  }
 }
 
 void Dataset::NormalizeScene() {
@@ -254,25 +279,25 @@ BoundedRays Dataset::RandRaysWholeSpace(int batch_size) {
   return RandRaysFromPose(batch_size, pose);
 }
 
-std::tuple<BoundedRays, Tensor, Tensor> Dataset::RandRaysDataOfCamera(int idx, int batch_size) {
-  int H = height_;
-  int W = width_;
-  Tensor i = torch::randint(0, H, batch_size, CUDALong);
-  Tensor j = torch::randint(0, W, batch_size, CUDALong);
-  auto [ rays_o, rays_d ] = Img2WorldRay(idx, torch::stack({ i, j }, -1).to(torch::kFloat32));
-  Tensor gt_colors = image_tensors_[idx].view({-1, 3}).index({ (i * W + j) }).to(torch::kCUDA).contiguous();
-  float near = bounds_.index({idx, 0}).item<float>();
-  float far  = bounds_.index({idx, 1}).item<float>();
+// std::tuple<BoundedRays, Tensor, Tensor> Dataset::RandRaysDataOfCamera(int idx, int batch_size) {
+//   int H = height_;
+//   int W = width_;
+//   Tensor i = torch::randint(0, H, batch_size, CUDALong);
+//   Tensor j = torch::randint(0, W, batch_size, CUDALong);
+//   auto [ rays_o, rays_d ] = Img2WorldRay(idx, torch::stack({ i, j }, -1).to(torch::kFloat32));
+//   Tensor gt_colors = image_tensors_[idx].view({-1, 3}).index({ (i * W + j) }).to(torch::kCUDA).contiguous();
+//   float near = bounds_.index({idx, 0}).item<float>();
+//   float far  = bounds_.index({idx, 1}).item<float>();
 
-  Tensor bounds = torch::stack({
-    torch::full({ H * W }, near, CUDAFloat),
-    torch::full({ H * W }, far,  CUDAFloat)
-  }, -1).contiguous();
-  return { { rays_o, rays_d, bounds }, gt_colors, torch::full({ batch_size }, idx, CUDAInt) };
-}
+//   Tensor bounds = torch::stack({
+//     torch::full({ H * W }, near, CUDAFloat),
+//     torch::full({ H * W }, far,  CUDAFloat)
+//   }, -1).contiguous();
+//   return { { rays_o, rays_d, bounds }, gt_colors, torch::full({ batch_size }, idx, CUDAInt) };
+// }
 
 
-std::tuple<BoundedRays, Tensor, Tensor> Dataset::RandRaysData(int batch_size, int sets) {
+std::tuple<BoundedRays, Tensor, Tensor, Tensor> Dataset::RandRaysData(int batch_size, int sets, bool ret_depth) {
   std::vector<int> img_idx;
   if ((sets & DATA_TRAIN_SET) != 0) {
     img_idx.insert(img_idx.end(), train_set_.begin(), train_set_.end());
@@ -291,19 +316,28 @@ std::tuple<BoundedRays, Tensor, Tensor> Dataset::RandRaysData(int batch_size, in
   Tensor ij = torch::stack({i, j}, -1).to(torch::kCUDA).contiguous();
 
   Tensor gt_colors = image_tensors_.view({-1, 3}).index({ (cam_indices * height_ * width_ + i * width_ + j).to(torch::kLong) }).to(torch::kCUDA).contiguous();
+
+  Tensor gt_depths;
+  if (ret_depth) {
+    gt_depths = depth_tensors_.view({-1}).index({ (cam_indices * height_ * width_ + i * width_ + j).to(torch::kLong) }).to(torch::kCUDA).contiguous();
+  } else {
+    gt_depths = torch::zeros({batch_size}, CUDAFloat);
+  }
+
   cam_indices = cam_indices.to(torch::kCUDA);
   auto [ rays_o, rays_d ] = Img2WorldRayFlex(cam_indices.to(torch::kInt32), ij.to(torch::kInt32));
   Tensor bounds = bounds_.index({cam_indices.to(torch::kLong)}).contiguous();
-  return { { rays_o, rays_d, bounds }, gt_colors, cam_indices.to(torch::kInt32).contiguous() };
+  return { { rays_o, rays_d, bounds }, gt_colors, cam_indices.to(torch::kInt32).contiguous(), gt_depths };
 }
 
-std::tuple<BoundedRays, Tensor, Tensor> Dataset::RandRaysDataOfTrainSet(int batch_size) {
-  if (ray_sample_mode_ == RaySampleMode::SINGLE_IMAGE) {
-    int idx = torch::randint(int(train_set_.size()), {1}).item<int>();
-    idx = train_set_[idx];
-    return RandRaysDataOfCamera(idx, batch_size);
-  }
-  else {
-    return RandRaysData(batch_size, DATA_TRAIN_SET);
-  }
-}
+
+// std::tuple<BoundedRays, Tensor, Tensor> Dataset::RandRaysDataOfTrainSet(int batch_size) {
+//   if (ray_sample_mode_ == RaySampleMode::SINGLE_IMAGE) {
+//     int idx = torch::randint(int(train_set_.size()), {1}).item<int>();
+//     idx = train_set_[idx];
+//     return RandRaysDataOfCamera(idx, batch_size);
+//   }
+//   else {
+//     return RandRaysData(batch_size, DATA_TRAIN_SET);
+//   }
+// }

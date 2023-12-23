@@ -1,0 +1,75 @@
+# 常用指令
+# 切 GPU
+export CUDA_VISIBLE_DEVICES=2
+
+# Preprocess
+# colmap
+bash scripts/local_hloc_and_resize.sh ./data/HoNY_nerf_pp/Home2_Env1_2023-05-05--20-48-36
+bash scripts/local_colmap_and_resize.sh ./data/HoNY_nerf_pp/Home2_Env1_2023-05-05--20-48-36
+bash scripts/local_colmap_and_resize.sh ./data/half_pick/half_pick
+bash scripts/my_colmap_script.sh ./data/half_pick/octopus # 这个收敛了
+bash scripts/my_colmap_script.sh ./data/half_pick/dining # 这个收敛了
+bash scripts/my_colmap_script.sh ./data/half_pick/draw_closing 
+bash scripts/my_colmap_script.sh ./data/Air_Fryer_Opening/haritheja_Env1_2023-11-21--13-34-39
+; bash scripts/my_colmap_script.sh ./data/half_pick/door_opening # 数据集太大了跑不动
+
+
+# Camera Pose
+python scripts/colmap2poses.py --data_dir ./data/HoNY_nerf_pp/Home2_Env1_2023-05-05--20-48-36
+python scripts/colmap2poses.py --data_dir ./data/half_pick/half_pick
+python scripts/colmap2poses.py --data_dir ./data/half_pick/octopus
+python scripts/colmap2poses.py --data_dir ./data/half_pick/dining
+python scripts/colmap2poses.py --data_dir ./data/half_pick/draw_closing # 这一步会报错，或许和他导出了两个 Model 有关
+python scripts/colmap2poses.py --data_dir ./data/half_pick/draw_opening
+python scripts/colmap2poses.py --data_dir ./data/Air_Fryer_Opening/haritheja_Env1_2023-11-21--13-34-39
+;  python scripts/colmap2poses.py --data_dir ./data/half_pick/door_opening
+# 生成的 camera npy 文件是(-1,27)维度的numpy数组
+
+
+# Visualzie Camera Pose
+python scripts/viz.py --data_dir ./data/Air_Fryer_Opening/haritheja_Env1_2023-11-21--13-34-39
+python scripts/viz.py --data_dir ./data/Air_Fryer_Opening/haritheja_Env1_2023-11-21--13-34-39 --cam_file cams_meta_colmap.npy
+python scripts/viz.py --data_dir ./data/Air_Fryer_Opening/haritheja_Env1_2023-11-21--13-34-39 --cam_file cams_meta_iphone.npy
+
+python scripts/viz.py --data_dir ./data/half_pick/half_pick
+
+# Train
+# 记录时间，log
+{ time python scripts/run.py --config-name=wanjinyou dataset_name=free_dataset mode=train +work_dir=$(pwd) case_name=grass ; } 2>&1 | tee  logs/free_dataset_grass.log
+{ time python scripts/run.py --config-name=wanjinyou_big dataset_name=free_dataset mode=train +work_dir=$(pwd) case_name=grass ; } 2>&1 | tee  logs/free_dataset_grass_big.log
+python scripts/run.py --config-name=wanjinyou dataset_name=half_pick case_name=half_pick mode=train +work_dir=$(pwd) dataset.factor=1 
+python scripts/run.py --config-name=wanjinyou dataset_name=half_pick case_name=octopus mode=train +work_dir=$(pwd) dataset.factor=1  # Render Error
+python scripts/run.py --config-name=wanjinyou dataset_name=half_pick case_name=dining mode=train +work_dir=$(pwd) dataset.factor=1  # Render Error
+python scripts/run.py --config-name=wanjinyou dataset_name=half_pick case_name=draw_closing mode=train +work_dir=$(pwd) dataset.factor=1 
+python scripts/run.py --config-name=wanjinyou dataset_name=half_pick case_name=door_opening mode=train +work_dir=$(pwd) dataset.factor=1  # 效果不好
+
+python scripts/run.py --config-name=wanjinyou dataset_name=Air_Fryer_Opening case_name=haritheja_Env1_2023-11-21--13-34-39 mode=render_path is_continue=true +work_dir=$(pwd)  dataset.with_depth=1
+
+
+# 10 k version
+python scripts/run.py --config-name=wanjinyou dataset_name=half_pick case_name=dining mode=train +work_dir=$(pwd) +default.train=10k
+
+
+# Render
+python scripts/inter_poses.py --data_dir ./data/example/ngp_fox --key_poses 5,10,15,20,25,30,35,40,45,49 --n_out_poses 200
+python scripts/inter_poses.py --data_dir ./data/half_pick/half_pick --key_poses 5,10,15,20,25,30,35,40,45,49 --n_out_poses 200
+python scripts/inter_poses.py --data_dir ./data/half_pick/door_opening --key_poses 5,35,65,95,125 --n_out_poses 300
+python scripts/inter_poses.py --data_dir ./data/half_pick/draw_closing --key_poses  5,10 --n_out_poses 200
+
+python scripts/run.py --config-name=wanjinyou dataset_name=half_pick case_name=half_pick mode=render_path is_continue=true +work_dir=$(pwd)
+python scripts/run.py --config-name=wanjinyou dataset_name=half_pick case_name=door_opening mode=render_path is_continue=true +work_dir=$(pwd) dataset.factor=1 
+python scripts/run.py --config-name=wanjinyou dataset_name=half_pick case_name=draw_closing mode=render_path is_continue=true +work_dir=$(pwd) dataset.factor=1 
+
+# 用iphone自带的位姿数据进行训练
+export CUDA_VISIBLE_DEVICES=2
+bash scripts/resize.sh ./data/Air_Fryer_Opening/haritheja_Env1_2023-11-21--13-34-39
+python scripts/file2poses.py --data_dir ./data/Air_Fryer_Opening/haritheja_Env1_2023-11-21--13-34-39
+python scripts/run.py --config-name=wanjinyou dataset_name=Air_Fryer_Opening case_name=haritheja_Env1_2023-11-21--13-34-39 mode=train +work_dir=$(pwd) dataset.factor=1  train.learning_rate=5e-3
+# LR 调大会爆
+python scripts/inter_poses.py --data_dir ./data/Air_Fryer_Opening/haritheja_Env1_2023-11-21--13-34-39 --key_poses 5,10,15,20,25,30,35,40,45,50,55,60 --n_out_poses 300
+python scripts/run.py --config-name=wanjinyou dataset_name=Air_Fryer_Opening case_name=haritheja_Env1_2023-11-21--13-34-39 mode=render_path is_continue=true +work_dir=$(pwd) 
+python scripts/run.py --config-name=wanjinyou dataset_name=Air_Fryer_Opening case_name=haritheja_Env1_2023-11-21--13-34-39 mode=render_path is_continue=true +work_dir=$(pwd) dataset.factor=1 
+
+python scripts/imgs2mp4.py --data_dir /home/DISCOVER_summer2022/cuily/workspace/f2-nerf/exp/haritheja_Env1_2023-11-21--13-34-39/test/novel_images
+python scripts/imgs2mp4.py --data_dir /home/DISCOVER_summer2022/cuily/workspace/f2-nerf/exp/door_opening/test/novel_images
+python scripts/imgs2mp4.py --data_dir /home/DISCOVER_summer2022/cuily/workspace/f2-nerf/exp/draw_closing/test/novel_images

@@ -39,6 +39,7 @@ ExpRunner::ExpRunner(const std::string& conf_path) {
   tv_loss_weight_ = config["train"]["tv_loss_weight"].as<float>();
   disp_loss_weight_ = config["train"]["disp_loss_weight"].as<float>();
   var_loss_weight_ = config["train"]["var_loss_weight"].as<float>();
+  depth_loss_weight_ = config["train"]["depth_loss_weight"].as<float>(); // TODO: Add depth loss weight in the config file. (script manner)
   var_loss_start_ = config["train"]["var_loss_start"].as<int>();
   var_loss_end_ = config["train"]["var_loss_end"].as<int>();
   gradient_scaling_start_ = config["train"]["gradient_scaling_start"].as<int>();
@@ -64,6 +65,7 @@ ExpRunner::ExpRunner(const std::string& conf_path) {
 
 void ExpRunner::Train() {
   global_data_pool_->mode_ = RunningMode::TRAIN;
+  bool with_depth = global_data_pool_->config_["dataset"]["with_depth"].as<bool>();
 
   std::string log_dir = base_exp_dir_ + "/logs";
   fs::create_directories(log_dir);
@@ -84,7 +86,7 @@ void ExpRunner::Train() {
       // global_data_pool_->drop_out_prob_ = 0.f;
 
       int cur_batch_size = int(pts_batch_size_ / global_data_pool_->meaningful_sampled_pts_per_ray_) >> 4 << 4;
-      auto [train_rays, gt_colors, emb_idx] = dataset_->RandRaysData(cur_batch_size, DATA_TRAIN_SET);
+      auto [train_rays, gt_colors, emb_idx, gt_depths] = dataset_->RandRaysData(cur_batch_size, DATA_TRAIN_SET, with_depth);
 
       Tensor& rays_o = train_rays.origins;
       Tensor& rays_d = train_rays.dirs;
@@ -103,7 +105,7 @@ void ExpRunner::Train() {
       Tensor sampled_weights = render_result.weights;
       Tensor idx_start_end = render_result.idx_start_end;
       Tensor sampled_var = CustomOps::WeightVar(sampled_weights, idx_start_end);
-      Tensor var_loss = (sampled_var + 1e-2).sqrt().mean();
+      Tensor var_loss = (sampled_var + 1e-2).sqrt().mean(); // TODO: May need to change the additonal 1e-2 to clamp
 
       float var_loss_weight = 0.f;
       if (iter_step_ > var_loss_end_) {
@@ -113,13 +115,32 @@ void ExpRunner::Train() {
         var_loss_weight = float(iter_step_ - var_loss_start_) / float(var_loss_end_ - var_loss_start_) * var_loss_weight_;
       }
 
-      Tensor loss = color_loss + var_loss * var_loss_weight +
+      Tensor sampled_depth_means = render_result.depth_means;
+      Tensor sampled_depth_vars = render_result.depth_vars.clamp(1.0e-3);
+
+      Tensor loss;
+      Tensor depth_loss;
+      if(with_depth){
+        // float depth_loss_weight = 0.f;
+        depth_loss = torch::log(sampled_depth_vars) + (sampled_depth_means - gt_depths).square() / sampled_depth_vars;
+        Tensor depth_loss_mask = (sampled_depth_means - gt_depths).square() > sampled_depth_vars;
+        depth_loss = depth_loss.masked_select(depth_loss_mask).mean(); // TODO: May need to remove depth_loss_mask
+        loss = color_loss + var_loss * var_loss_weight +
+                    disparity_loss * disp_loss_weight_ +
+                    tv_loss * tv_loss_weight_ +
+                    depth_loss_weight_ * depth_loss; // TODO: May need to remove disparity_loss
+
+      }else{
+        loss = color_loss + var_loss * var_loss_weight +
                     disparity_loss * disp_loss_weight_ +
                     tv_loss * tv_loss_weight_;
-
+      }
+      
+      
       float mse = (pred_colors - gt_colors).square().mean().item<float>();
       float psnr = 20.f * std::log10(1 / std::sqrt(mse));
       psnr_smooth = psnr_smooth < 0.f ? psnr : psnr * .1f + psnr_smooth * .9f;
+      float rmse = (sampled_depth_means - gt_depths).square().mean().sqrt().item<float>();
       CHECK(!std::isnan(pred_colors.mean().item<float>()));
       CHECK(!std::isnan(gt_colors.mean().item<float>()));
       CHECK(!std::isnan(mse));
@@ -151,7 +172,6 @@ void ExpRunner::Train() {
         int vis_idx;
         vis_idx = (iter_step_ / vis_freq_) % dataset_->test_set_.size();
         vis_idx = dataset_->test_set_[vis_idx];
-        VisualizeImage(vis_idx);
       }
 
       if (iter_step_ % save_freq_ == 0) {
@@ -161,9 +181,8 @@ void ExpRunner::Train() {
 
       if (iter_step_ % report_freq_ == 0) {
         std::cout << fmt::format(
-            "Iter: {:>6d} PSNR: {:.2f} NRays: {:>5d} OctSamples: {:.1f} Samples: {:.1f} MeaningfulSamples: {:.1f} IPS: {:.1f} LR: {:.4f}",
+            "Iter: {:>6d} NRays: {:>5d} OctSamples: {:.1f} Samples: {:.1f} MeaningfulSamples: {:.1f} IPS: {:.1f} LR: {:.4f}",
             iter_step_,
-            psnr_smooth,
             cur_batch_size,
             global_data_pool_->sampled_oct_per_ray_,
             global_data_pool_->sampled_pts_per_ray_,
@@ -171,6 +190,45 @@ void ExpRunner::Train() {
             1.f / time_per_iter,
             optimizer_->param_groups()[0].options().get_lr())
                   << std::endl;
+
+          std::cout << fmt::format(
+            "Iter: {:>6d} PSNR: {:.2f} RMSE: {:.4f}",
+            iter_step_,
+            psnr_smooth,
+            rmse,
+            cur_batch_size,
+            global_data_pool_->sampled_oct_per_ray_,
+            global_data_pool_->sampled_pts_per_ray_,
+            global_data_pool_->meaningful_sampled_pts_per_ray_,
+            1.f / time_per_iter,
+            optimizer_->param_groups()[0].options().get_lr())
+                  << std::endl;
+
+          if (with_depth){
+            std::cout << fmt::format(
+              "Iter: {:>6d} Loss: {:.6e} ColorLoss: {:.6e} VarLoss: {:.6e} DispLoss: {:.6e} TvLoss: {:.6e} DepthLoss: {:.6e}",
+              iter_step_,
+              loss.item<float>(),
+              color_loss.item<float>(),
+              var_loss.item<float>(),
+              disparity_loss.item<float>(),
+              tv_loss.item<float>(),
+              depth_loss.item<float>()
+            ) << std::endl;
+          } else{
+            std::cout << fmt::format(
+              "Iter: {:>6d} Loss: {:.6e} ColorLoss: {:.6e} VarLoss: {:.6e} DispLoss: {:.6e} TvLoss: {:.6e}",
+              iter_step_,
+              loss.item<float>(),
+              color_loss.item<float>(),
+              var_loss.item<float>(),
+              disparity_loss.item<float>(),
+              tv_loss.item<float>()
+            ) << std::endl;
+          }
+
+
+          std::cout << std::endl;
       }
       UpdateAdaParams();
     }
@@ -373,9 +431,9 @@ void ExpRunner::TestImages() {
       cnt += 1.f;
       Utils::WriteImageTensor(base_exp_dir_ + "/test_images/" + fmt::format("color_{}_{:0>3d}.png", iter_step_, i),
                              pred_colors);
-      Utils::WriteImageTensor(base_exp_dir_ + "/test_images/" + fmt::format("depth_{}_{:0>3d}.png", iter_step_, i),
+      Utils::WriteImageTensor(base_exp_dir_ + "/test_images/" + fmt::format("disparity_{}_{:0>3d}.png", iter_step_, i),
                               pred_disps.repeat({1, 1, 3}));
-      Utils::WriteImageTensor(base_exp_dir_ + "/test_images/" + fmt::format("oct_depth_{}_{:0>3d}.png", iter_step_, i),
+      Utils::WriteImageTensor(base_exp_dir_ + "/test_images/" + fmt::format("oct_disparity_{}_{:0>3d}.png", iter_step_, i),
                              first_oct_dis.repeat({1, 1, 3}));
 
     }

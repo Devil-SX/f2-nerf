@@ -1,4 +1,8 @@
 cmake_minimum_required(VERSION 3.18)
+
+set(CMAKE_BUILD_TYPE "Debug")
+set(CMAKE_CUDA_COMPILER /usr/local/cuda-11.7/bin/nvcc)
+
 project(f2nerf
         VERSION 0.1
         LANGUAGES CUDA CXX)

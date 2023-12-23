@@ -37,9 +37,9 @@ public:
   BoundedRays RandRaysFromPose(int batch_size, const Tensor& pose);
   BoundedRays RaysInterpolate(int idx_0, int idx_1, float alpha, int reso_level = 1);
   BoundedRays RandRaysWholeSpace(int batch_size);
-  std::tuple<BoundedRays, Tensor, Tensor> RandRaysDataOfCamera(int idx, int batch_size);
-  std::tuple<BoundedRays, Tensor, Tensor> RandRaysDataOfTrainSet(int batch_size); // Deprecated.
-  std::tuple<BoundedRays, Tensor, Tensor> RandRaysData(int batch_size, int sets);
+  // std::tuple<BoundedRays, Tensor, Tensor> RandRaysDataOfCamera(int idx, int batch_size);
+  // std::tuple<BoundedRays, Tensor, Tensor> RandRaysDataOfTrainSet(int batch_size); // Deprecated.
+  std::tuple<BoundedRays, Tensor, Tensor, Tensor> RandRaysData(int batch_size, int sets, bool ret_depth = false);
 
   // Others
   Rays Img2WorldRay(int cam_idx, const Tensor& ij);
@@ -54,9 +54,12 @@ public:
   Tensor center_;
   float radius_;
 
+  bool with_depth_;
+
   int height_, width_;
   std::vector<int> train_set_, test_set_, val_set_, split_info_;
   Tensor image_tensors_;
+  Tensor depth_tensors_;
   RaySampleMode ray_sample_mode_;
 };
 

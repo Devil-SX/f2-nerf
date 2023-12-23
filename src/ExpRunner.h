@@ -42,7 +42,7 @@ public:
   int gradient_scaling_start_, gradient_scaling_end_;
   float learning_rate_, learning_rate_alpha_, learning_rate_warm_up_end_iter_;
   float gradient_door_end_iter_;
-  float var_loss_weight_, tv_loss_weight_, disp_loss_weight_;
+  float var_loss_weight_, tv_loss_weight_, disp_loss_weight_, depth_loss_weight_;
 
   std::unique_ptr<GlobalDataPool> global_data_pool_;
   std::unique_ptr<Dataset> dataset_;

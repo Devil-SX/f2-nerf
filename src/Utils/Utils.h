@@ -15,4 +15,6 @@ int SaveVectorAsNpy(const std::string& path, std::vector<float> data);
 Tensor ReadImageTensor(const std::string& path);
 bool WriteImageTensor(const std::string& path, Tensor img);
 
+Tensor ReadDepthTensor(const std::string& path);
+bool WriteDepthTensor(const std::string &path, Tensor img);
 }
